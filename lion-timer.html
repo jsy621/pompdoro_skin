@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>사자 타이머</title>
+<style>
+  :root { --bg:#fff7e0; --accent:#f08a24; --text:#4a3420; --muted:#9a8468; }
+  body.rest { --bg:#e8f6ee; --accent:#2fa561; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--text); font-family:"Malgun Gothic",system-ui,sans-serif; transition:background .4s; }
+  .card { background:#fff; border-radius:28px; padding:28px; width:min(92vw,360px); text-align:center; box-shadow:0 10px 40px rgba(0,0,0,.08); }
+  .tabs { display:flex; gap:6px; background:#f5f0e6; border-radius:999px; padding:4px; }
+  .tabs button { flex:1; border:0; background:none; padding:8px 0; border-radius:999px; cursor:pointer; color:var(--muted); font:inherit; font-size:14px; }
+  .tabs button.active { background:var(--accent); color:#fff; }
+  svg.lion { width:220px; height:220px; margin:16px auto 0; display:block; }
+  .lion.running { animation:bob 1.2s ease-in-out infinite; }
+  @keyframes bob { 50% { transform:translateY(-6px); } }
+  .time { font-size:56px; font-weight:700; font-variant-numeric:tabular-nums; margin-top:4px; }
+  .bar { height:8px; background:#f1ead9; border-radius:99px; overflow:hidden; margin:10px 0; }
+  .bar i { display:block; height:100%; width:0; background:var(--accent); transition:width .3s linear; }
+  .msg { min-height:22px; color:var(--muted); font-size:14px; margin-bottom:16px; }
+  .controls { display:flex; gap:10px; }
+  .controls button { flex:1; padding:14px; font:inherit; font-size:16px; border:0; border-radius:14px; cursor:pointer; }
+  #start { background:var(--accent); color:#fff; font-weight:700; }
+  #reset { background:#f5f0e6; color:var(--text); }
+  details { margin-top:16px; font-size:14px; color:var(--muted); text-align:left; }
+  summary { cursor:pointer; text-align:center; }
+  .set { display:grid; grid-template-columns:1fr auto; gap:8px; margin-top:10px; align-items:center; }
+  .set input { width:70px; padding:6px; border:1px solid #ddd; border-radius:8px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="tabs" id="tabs">
+    <button data-mode="work" class="active">집중</button>
+    <button data-mode="rest">휴식</button>
+  </div>
+
+  <!-- 오리지널 사자 새끼 캐릭터 -->
+  <svg class="lion" id="lion" viewBox="0 0 220 220">
+    <g id="mane">
+      <circle cx="110" cy="112" r="84" fill="#e8741a"/>
+      <g fill="#f08a24">
+        <circle cx="110" cy="24" r="22"/><circle cx="60" cy="38" r="22"/><circle cx="160" cy="38" r="22"/>
+        <circle cx="30" cy="80" r="22"/><circle cx="190" cy="80" r="22"/>
+        <circle cx="26" cy="132" r="22"/><circle cx="194" cy="132" r="22"/>
+        <circle cx="58" cy="180" r="22"/><circle cx="162" cy="180" r="22"/><circle cx="110" cy="196" r="20"/>
+      </g>
+    </g>
+    <circle cx="62" cy="62" r="16" fill="#f7c27a"/><circle cx="158" cy="62" r="16" fill="#f7c27a"/>
+    <circle cx="110" cy="116" r="64" fill="#ffe3b0"/>
+    <ellipse cx="110" cy="140" rx="30" ry="22" fill="#fff4dc"/>
+    <g id="eyes" fill="#4a3420">
+      <circle cx="84" cy="108" r="7"/><circle cx="136" cy="108" r="7"/>
+    </g>
+    <g id="eyesClosed" stroke="#4a3420" stroke-width="4" stroke-linecap="round" fill="none" style="display:none">
+      <path d="M76 110 q8 -8 16 0"/><path d="M128 110 q8 -8 16 0"/>
+    </g>
+    <ellipse cx="68" cy="130" rx="9" ry="6" fill="#ffb59a" opacity=".7"/>
+    <ellipse cx="152" cy="130" rx="9" ry="6" fill="#ffb59a" opacity=".7"/>
+    <path d="M102 126 h16 l-8 9z" fill="#b5532a"/>
+    <path id="mouth" d="M96 142 q14 12 28 0" stroke="#4a3420" stroke-width="3.5" stroke-linecap="round" fill="none"/>
+    <path d="M70 188 q40 18 80 0 l-6 14 q-34 12 -68 0z" fill="#3a7bd5"/>
+  </svg>
+
+  <div class="time" id="time">25:00</div>
+  <div class="bar"><i id="bar"></i></div>
+  <div class="msg" id="msg"></div>
+  <div class="controls">
+    <button id="start">시작</button>
+    <button id="reset">초기화</button>
+  </div>
+  <details>
+    <summary>설정 (분)</summary>
+    <div class="set">
+      <label for="s-work">집중</label><input id="s-work" type="number" min="1" max="120" value="25">
+      <label for="s-rest">휴식</label><input id="s-rest" type="number" min="1" max="60" value="5">
+    </div>
+  </details>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const cfg = { work:25, rest:5 };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('lion-cfg') || '{}')); } catch {}
+$('s-work').value = cfg.work; $('s-rest').value = cfg.rest;
+
+let mode='work', total=cfg.work*60, remaining=total, endAt=null, timer=null, done=0;
+const fmt = s => String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');
+
+function render() {
+  const left = Math.max(0, Math.ceil(remaining));
+  $('time').textContent = fmt(left);
+  $('bar').style.width = (100 * (1 - remaining/total)) + '%';
+  $('start').textContent = timer ? '일시정지' : (remaining < total ? '계속' : '시작');
+  document.title = (timer ? fmt(left)+' · ' : '') + '사자 타이머';
+  document.body.className = mode === 'work' ? '' : 'rest';
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+  // 캐릭터 상태
+  const resting = mode === 'rest';
+  $('eyes').style.display = resting ? 'none' : '';
+  $('eyesClosed').style.display = resting ? '' : 'none';
+  $('mouth').setAttribute('d', timer && !resting ? 'M98 142 h24' : 'M96 142 q14 12 28 0');
+  $('lion').classList.toggle('running', !!timer);
+  $('msg').textContent = resting ? (timer ? '쿨쿨... 푹 쉬는 중' : '휴식 시간이에요')
+    : (timer ? '사자가 함께 집중하고 있어요!' : `오늘 완료: ${done}회`);
+}
+function stop(){ clearInterval(timer); timer=null; endAt=null; }
+function setMode(m){ stop(); mode=m; total=remaining=cfg[m]*60; render(); }
+function start(){ endAt=Date.now()+remaining*1000; timer=setInterval(tick,200); render(); }
+function tick(){ remaining=(endAt-Date.now())/1000; remaining<=0 ? finish() : render(); }
+function finish(){
+  stop(); beep();
+  if (mode==='work') done++;
+  setMode(mode==='work' ? 'rest' : 'work');
+  start();
+}
+function beep(){
+  try {
+    const ac=new (window.AudioContext||window.webkitAudioContext)();
+    [0,.25,.5].forEach(d=>{
+      const o=ac.createOscillator(),g=ac.createGain();
+      o.frequency.value=660; o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(.2,ac.currentTime+d);
+      g.gain.exponentialRampToValueAtTime(.001,ac.currentTime+d+.2);
+      o.start(ac.currentTime+d); o.stop(ac.currentTime+d+.2);
+    });
+  } catch {}
+}
+$('start').onclick = () => timer ? (stop(), render()) : start();
+$('reset').onclick = () => setMode(mode);
+$('tabs').onclick = e => { if (e.target.dataset.mode) setMode(e.target.dataset.mode); };
+['work','rest'].forEach(k => $('s-'+k).onchange = e => {
+  const v = Math.max(1, parseInt(e.target.value) || cfg[k]);
+  cfg[k]=v; e.target.value=v;
+  try { localStorage.setItem('lion-cfg', JSON.stringify(cfg)); } catch {}
+  if (!timer && remaining===total) setMode(mode);
+});
+render();
+</script>
+</body>
+</html>

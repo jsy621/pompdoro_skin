@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>포모도로 타이머</title>
+<style>
+  :root { --bg:#fff4f0; --card:#fff; --text:#2b2b2b; --accent:#e5533d; --muted:#8a8a8a; }
+  body.short { --bg:#eefaf1; --accent:#2fa561; }
+  body.long  { --bg:#eef4fd; --accent:#3a7bd5; }
+  * { box-sizing:border-box; }
+  body { margin:0; min-height:100vh; display:flex; align-items:center; justify-content:center;
+         background:var(--bg); color:var(--text); font-family:"Malgun Gothic",system-ui,sans-serif; transition:background .4s; }
+  .card { background:var(--card); border-radius:24px; padding:32px 28px; width:min(92vw,380px);
+          box-shadow:0 10px 40px rgba(0,0,0,.08); text-align:center; }
+  .tabs { display:flex; gap:6px; background:#f2f2f2; border-radius:999px; padding:4px; }
+  .tabs button { flex:1; border:0; background:none; padding:8px 0; border-radius:999px; cursor:pointer; font-size:14px; color:var(--muted); font-family:inherit; }
+  .tabs button.active { background:var(--accent); color:#fff; }
+  .ring { position:relative; width:240px; height:240px; margin:28px auto 8px; }
+  .ring svg { transform:rotate(-90deg); }
+  .ring circle { fill:none; stroke-width:10; }
+  .ring .bg { stroke:#eee; }
+  .ring .fg { stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset .3s linear; }
+  .time { position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+          font-size:56px; font-weight:700; font-variant-numeric:tabular-nums; }
+  .info { color:var(--muted); font-size:14px; margin-bottom:20px; min-height:20px; }
+  .controls { display:flex; gap:10px; }
+  .controls button { flex:1; padding:14px; font-size:16px; border-radius:14px; border:0; cursor:pointer; font-family:inherit; }
+  #start { background:var(--accent); color:#fff; font-weight:700; }
+  #reset { background:#f2f2f2; color:var(--text); }
+  details { margin-top:20px; text-align:left; font-size:14px; color:var(--muted); }
+  summary { cursor:pointer; text-align:center; }
+  .settings { display:grid; grid-template-columns:1fr auto; gap:8px 12px; margin-top:12px; align-items:center; }
+  .settings input { width:70px; padding:6px; border:1px solid #ddd; border-radius:8px; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="tabs" id="tabs">
+    <button data-mode="work" class="active">집중</button>
+    <button data-mode="short">짧은 휴식</button>
+    <button data-mode="long">긴 휴식</button>
+  </div>
+  <div class="ring">
+    <svg width="240" height="240" viewBox="0 0 240 240">
+      <circle class="bg" cx="120" cy="120" r="110"/>
+      <circle class="fg" id="fg" cx="120" cy="120" r="110"/>
+    </svg>
+    <div class="time" id="time">25:00</div>
+  </div>
+  <div class="info" id="info"></div>
+  <div class="controls">
+    <button id="start">시작</button>
+    <button id="reset">초기화</button>
+  </div>
+  <details>
+    <summary>설정 (분)</summary>
+    <div class="settings">
+      <label for="s-work">집중</label><input id="s-work" type="number" min="1" max="120" value="25">
+      <label for="s-short">짧은 휴식</label><input id="s-short" type="number" min="1" max="60" value="5">
+      <label for="s-long">긴 휴식</label><input id="s-long" type="number" min="1" max="60" value="15">
+      <label for="s-every">긴 휴식 주기(회)</label><input id="s-every" type="number" min="2" max="10" value="4">
+    </div>
+  </details>
+</div>
+
+<script>
+const C = 2 * Math.PI * 110;
+const $ = id => document.getElementById(id);
+const fg = $('fg'); fg.style.strokeDasharray = C;
+
+const cfg = { work:25, short:5, long:15, every:4 };
+try { Object.assign(cfg, JSON.parse(localStorage.getItem('pomo-cfg') || '{}')); } catch {}
+$('s-work').value = cfg.work; $('s-short').value = cfg.short;
+$('s-long').value = cfg.long; $('s-every').value = cfg.every;
+
+let mode = 'work', total = cfg.work * 60, remaining = total, endAt = null, timer = null, done = 0;
+
+const fmt = s => String(Math.floor(s/60)).padStart(2,'0') + ':' + String(s%60).padStart(2,'0');
+
+function render() {
+  const t = fmt(Math.max(0, Math.ceil(remaining)));
+  $('time').textContent = t;
+  document.title = (timer ? t + ' · ' : '') + '포모도로 타이머';
+  fg.style.strokeDashoffset = C * (1 - remaining / total);
+  $('start').textContent = timer ? '일시정지' : (remaining < total ? '계속' : '시작');
+  $('info').textContent = `완료한 집중 세션: ${done}회`;
+  document.body.className = mode === 'work' ? '' : mode;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('active', b.dataset.mode === mode));
+}
+
+function setMode(m) {
+  stop();
+  mode = m; total = remaining = cfg[m] * 60;
+  render();
+}
+
+function stop() { clearInterval(timer); timer = null; endAt = null; }
+
+function tick() {
+  remaining = (endAt - Date.now()) / 1000;
+  if (remaining <= 0) { finish(); return; }
+  render();
+}
+
+function start() {
+  endAt = Date.now() + remaining * 1000;
+  timer = setInterval(tick, 200);
+  render();
+}
+
+function finish() {
+  stop(); beep();
+  if (mode === 'work') {
+    done++;
+    setMode(done % cfg.every === 0 ? 'long' : 'short');
+  } else setMode('work');
+  notify();
+  start();
+}
+
+function notify() {
+  const msg = mode === 'work' ? '다시 집중할 시간입니다!' : '휴식 시간입니다.';
+  if ('Notification' in window && Notification.permission === 'granted') new Notification('포모도로', { body: msg });
+}
+
+function beep() {
+  try {
+    const ac = new (window.AudioContext || window.webkitAudioContext)();
+    [0, .25, .5].forEach(d => {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.frequency.value = 880; o.connect(g); g.connect(ac.destination);
+      g.gain.setValueAtTime(.2, ac.currentTime + d);
+      g.gain.exponentialRampToValueAtTime(.001, ac.currentTime + d + .2);
+      o.start(ac.currentTime + d); o.stop(ac.currentTime + d + .2);
+    });
+  } catch {}
+}
+
+$('start').onclick = () => {
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+  timer ? (stop(), render()) : start();
+};
+$('reset').onclick = () => setMode(mode);
+$('tabs').onclick = e => { if (e.target.dataset.mode) setMode(e.target.dataset.mode); };
+
+['work','short','long','every'].forEach(k => {
+  $('s-' + k).onchange = e => {
+    const v = Math.max(1, parseInt(e.target.value) || cfg[k]);
+    cfg[k] = v; e.target.value = v;
+    try { localStorage.setItem('pomo-cfg', JSON.stringify(cfg)); } catch {}
+    if (!timer && remaining === total) setMode(mode);
+  };
+});
+
+render();
+</script>
+</body>
+</html>
